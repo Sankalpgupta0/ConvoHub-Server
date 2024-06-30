@@ -20,29 +20,29 @@ const io = new Server(server, {
     }
 })
 
-/***
- * socket running at http://localhost:8080/
- */
-
-//online user
+// Online user tracking
 const onlineUser = new Set()
+// Track the current chat or group each user is viewing
+const userCurrentView = {};
 
 io.on('connection', async (socket) => {
-    console.log("connect User ", socket.id)
+    // console.log("connect User ", socket.id)
 
     const token = socket.handshake.auth.token
 
-    //current user details 
+    // Current user details 
     const user = await getUserDetailsFromToken(token)
 
-    //create a room
+    // Create a room for the user
     socket.join(user?._id.toString())
     onlineUser.add(user?._id?.toString())
 
     io.emit('onlineUser', Array.from(onlineUser))
 
     socket.on('message-page', async (userId) => {
-        // console.log('userId', userId)
+        // Set the current chat the user is viewing
+        userCurrentView[user._id] = { type: 'chat', id: userId };
+
         const userDetails = await User.findById(userId).select("-password")
 
         const payload = {
@@ -50,12 +50,11 @@ io.on('connection', async (socket) => {
             name: userDetails?.name,
             email: userDetails?.email,
             profile_pic: userDetails?.profile_pic,
-            // has() because onlineUser is a set not an array but this function is like Array.include()
             online: onlineUser.has(userId)
         }
         socket.emit('message-user', payload)
 
-        //get previous message
+        // Get previous messages
         const getConversationMessage = await Conversation.findOne({
             "$or": [
                 { sender: user?._id, receiver: userId },
@@ -66,10 +65,10 @@ io.on('connection', async (socket) => {
         socket.emit('message', getConversationMessage?.messages || [])
     })
 
-    //new message
+    // New message
     socket.on('new message', async (data) => {
+        // console.log(userCurrentView)
 
-        //check conversation is available both user
         let conversation = await Conversation.findOne({
             "$or": [
                 { sender: data?.sender, receiver: data?.receiver },
@@ -77,7 +76,6 @@ io.on('connection', async (socket) => {
             ]
         })
 
-        //if conversation is not available
         if (!conversation) {
             const createConversation = await Conversation({
                 sender: data?.sender,
@@ -95,7 +93,7 @@ io.on('connection', async (socket) => {
         })
         const saveMessage = await message.save()
 
-        const updateConversation = await Conversation.updateOne({ _id: conversation?._id }, {
+        await Conversation.updateOne({ _id: conversation?._id }, {
             "$push": { messages: saveMessage?._id }
         })
 
@@ -106,11 +104,13 @@ io.on('connection', async (socket) => {
             ]
         }).populate('messages').sort({ updatedAt: -1 })
 
-
+        // Emit message to sender and receiver
         socket.emit('message', getConversationMessage?.messages || [])
-        io.to(data?.receiver).emit('message', getConversationMessage?.messages || [])
+        if(userCurrentView[data?.receiver] && userCurrentView[data?.receiver]?.id == data?.sender){
+            io.to(data?.receiver).emit('message', getConversationMessage?.messages || [])
+        }
 
-        //send conversation
+        // Send updated conversation lists
         const conversationSender = await getConversation(data?.sender)
         const conversationReceiver = await getConversation(data?.receiver)
 
@@ -118,23 +118,23 @@ io.on('connection', async (socket) => {
         io.to(data?.receiver).emit('conversation', conversationReceiver)
     })
 
-    //sidebar for conversations
+    // Sidebar for conversations
     socket.on('sidebar-conv', async (currentUserId) => {
-        console.log("current user", currentUserId)
+        // console.log("current user", currentUserId)
         const conversation = await getConversation(currentUserId)
 
         socket.emit('conversation', conversation)
     })
 
-    //sidebar for groups
+    // Sidebar for groups
     socket.on('sidebar-group', async (currentUserId) => {
         const group = await getGroups(currentUserId)
-        // console.log('group : ', group)
+        // console.log(group)
         socket.emit('group', group)
     })
 
+    // Seen message
     socket.on('seen', async (msgByUserId) => {
-
         let conversation = await Conversation.findOne({
             "$or": [
                 { sender: user?._id, receiver: msgByUserId },
@@ -144,12 +144,11 @@ io.on('connection', async (socket) => {
 
         const conversationMessageId = conversation?.messages || []
 
-        const updateMessages = await Message.updateMany(
+        await Message.updateMany(
             { _id: { "$in": conversationMessageId }, msgByUserId: msgByUserId },
             { "$set": { seen: true } }
         )
 
-        //send conversation
         const conversationSender = await getConversation(user?._id?.toString())
         const conversationReceiver = await getConversation(msgByUserId)
 
@@ -157,35 +156,34 @@ io.on('connection', async (socket) => {
         io.to(msgByUserId).emit('conversation', conversationReceiver)
     })
 
-
-    const userCurrentGroup = {};
+    // Join a group
     socket.on('joinGroup', async (data) => {
-        const userId = socket.id; // Assuming socket.id is used to uniquely identify the user
-        
         // Leave the current group if the user is already in a group
-        if (userCurrentGroup[userId]) {
-            socket.leave(userCurrentGroup[userId]);
-            console.log(`User ${userId} left group ${userCurrentGroup[userId]}`);
+        if (userCurrentView[user._id]?.type === 'group') {
+            socket.leave(userCurrentView[user._id].id);
+            // console.log(`User ${user._id} left group ${userCurrentView[user._id].id}`);
         }
-    
-        // Join the new group
+
+        // Set the current group the user is viewing
+        userCurrentView[user._id] = { type: 'group', id: data };
+
         socket.join(data);
-        console.log(`User ${userId} joined group ${data}`);
-        userCurrentGroup[userId] = data; // Update the current group for the user
-    
+        // console.log(`User ${user._id} joined group ${data}`);
+
         const groupDetails = await Group.findById(data).populate('members');
         socket.emit("groupDetails", groupDetails);
-    
+
         const getGroupMessage = await Group.findOne({
             _id: data
         }).populate('messages').sort({ updatedAt: -1 });
-    
+
         // Send chat messages only to the group members
         socket.emit('group chat', getGroupMessage?.messages || []);
     });
 
+    // New group message
     socket.on("new group message", async (data) => {
-        // console.log('new group message', data)
+        console.log(data)
         const group = await Group.findById(data.receiver)
         const message = await Message.create({
             text: data.text,
@@ -194,7 +192,6 @@ io.on('connection', async (socket) => {
             pdfUrl: data.pdfUrl,
             msgByUserId: data?.sender,
         })
-        // console.log(group)
         group.messages.push(message)
         await group.save()
 
@@ -202,19 +199,25 @@ io.on('connection', async (socket) => {
             _id: group._id
         }).populate('messages').sort({ updatedAt: -1 })
 
+
         io.to(data.receiver).emit('group chat', getGroupMessage?.messages || [])
+
+        const groupLastMsg = await getGroups(data?.sender)
+        // console.log(groupLastMsg)
+        socket.emit('group', groupLastMsg)
+
+        // get all groups of userId and then send it to userId
     })
 
-    //disconnect
+    // Disconnect
     socket.on('disconnect', () => {
         onlineUser.delete(user?._id?.toString())
-        console.log('disconnect user ', socket.id)
+        delete userCurrentView[socket.id];
+        // console.log('disconnect user ', socket.id)
     })
 })
-
 
 export {
     app,
     server
 }
-
