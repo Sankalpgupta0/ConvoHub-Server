@@ -8,6 +8,7 @@ import Message from '../models/MessageModel.js'
 import getConversation from '../helpers/getConversation.js'
 import getGroups from '../helpers/getGroups.js'
 import Group from '../models/GroupModel.js'
+import mongoose from 'mongoose'
 
 const app = express()
 
@@ -106,7 +107,7 @@ io.on('connection', async (socket) => {
 
         // Emit message to sender and receiver
         socket.emit('message', getConversationMessage?.messages || [])
-        if(userCurrentView[data?.receiver] && userCurrentView[data?.receiver]?.id == data?.sender){
+        if (userCurrentView[data?.receiver] && userCurrentView[data?.receiver]?.id == data?.sender) {
             io.to(data?.receiver).emit('message', getConversationMessage?.messages || [])
         }
 
@@ -173,12 +174,36 @@ io.on('connection', async (socket) => {
         const groupDetails = await Group.findById(data).populate('members');
         socket.emit("groupDetails", groupDetails);
 
-        const getGroupMessage = await Group.findOne({
-            _id: data
-        }).populate('messages').sort({ updatedAt: -1 });
+        const getGroupMessage = await Group.aggregate([
+            {
+                $match: {
+                    _id: new mongoose.Types.ObjectId(data)
+                }
+            },
+            {
+                $lookup: {
+                    from: 'messages',  // The collection name of your users
+                    localField: 'messages',
+                    foreignField: '_id',
+                    as: 'messages',
+                    pipeline : [
+                        {
+                            $lookup: {
+                                from: 'users',  // The collection name of your users
+                                localField: 'msgByUserId',
+                                foreignField: '_id',
+                                as: 'userDetails'
+                            }
+                        },
+                    ]
+                }
+            },
+        ])
 
+
+        // console.log("getGroupMessage : ", getGroupMessage[0].messages)
         // Send chat messages only to the group members
-        socket.emit('group chat', getGroupMessage?.messages || []);
+        socket.emit('group chat', getGroupMessage[0]?.messages|| []);
     });
 
     // New group message
@@ -195,12 +220,33 @@ io.on('connection', async (socket) => {
         group.messages.push(message)
         await group.save()
 
-        const getGroupMessage = await Group.findOne({
-            _id: group._id
-        }).populate('messages').sort({ updatedAt: -1 })
+        const getGroupMessage = await Group.aggregate([
+            {
+                $match: {
+                    _id: new mongoose.Types.ObjectId(data.receiver)
+                }
+            },
+            {
+                $lookup: {
+                    from: 'messages',  // The collection name of your users
+                    localField: 'messages',
+                    foreignField: '_id',
+                    as: 'messages',
+                    pipeline : [
+                        {
+                            $lookup: {
+                                from: 'users',  // The collection name of your users
+                                localField: 'msgByUserId',
+                                foreignField: '_id',
+                                as: 'userDetails'
+                            }
+                        },
+                    ]
+                }
+            },
+        ])
 
-
-        io.to(data.receiver).emit('group chat', getGroupMessage?.messages || [])
+        io.to(data.receiver).emit('group chat', getGroupMessage[0]?.messages|| [])
 
         const groupLastMsg = await getGroups(data?.sender)
         // console.log(groupLastMsg)
