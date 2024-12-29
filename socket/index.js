@@ -27,7 +27,7 @@ const onlineUser = new Set()
 const userCurrentView = {};
 
 io.on('connection', async (socket) => {
-    // console.log("connect User ", socket.id)
+    console.log("connect User ", socket.id)
 
     const token = socket.handshake.auth.token
 
@@ -35,12 +35,13 @@ io.on('connection', async (socket) => {
     const user = await getUserDetailsFromToken(token)
 
     // Create a room for the user
-    socket.join(user?._id.toString())
+    socket.join(user?._id?.toString())
     onlineUser.add(user?._id?.toString())
 
     io.emit('onlineUser', Array.from(onlineUser))
 
     socket.on('message-page', async (userId) => {
+        console.log("userId in message-page", userId)
         // Set the current chat the user is viewing
         userCurrentView[user._id] = { type: 'chat', id: userId };
 
@@ -66,9 +67,36 @@ io.on('connection', async (socket) => {
         socket.emit('message', getConversationMessage?.messages || [])
     })
 
+    socket.on('message-page-phone', async (data) => {
+        console.log("userId in message-page", data.receiverId, data.userId)
+        // Set the current chat the user is viewing
+        userCurrentView[data.userId] = { type: 'chat', id:  data.receiverId };
+
+        const userDetails = await User.findById(data.receiverId).select("-password")
+
+        const payload = {
+            _id: userDetails?._id,
+            name: userDetails?.name,
+            email: userDetails?.email,
+            profile_pic: userDetails?.profile_pic,
+            online: onlineUser.has(data.receiverId)
+        }
+        socket.emit('message-user-phone', payload)
+
+        // Get previous messages
+        const getConversationMessage = await Conversation.findOne({
+            "$or": [
+                { sender:  data.userId, receiver:  data.receiverId },
+                { sender:  data.receiverId, receiver: data.userId}
+            ]
+        }).populate('messages').sort({ updatedAt: -1 })
+
+        socket.emit('message-phone', getConversationMessage?.messages || [])
+    })
+
     // New message
     socket.on('new message', async (data) => {
-        // console.log(userCurrentView)
+        console.log(data)
 
         let conversation = await Conversation.findOne({
             "$or": [
@@ -109,6 +137,12 @@ io.on('connection', async (socket) => {
         socket.emit('message', getConversationMessage?.messages || [])
         if (userCurrentView[data?.receiver] && userCurrentView[data?.receiver]?.id == data?.sender) {
             io.to(data?.receiver).emit('message', getConversationMessage?.messages || [])
+            io.to(data?.receiver).emit('message-phone', getConversationMessage?.messages || [])
+        }
+        socket.emit('message-phone', getConversationMessage?.messages || [])
+        if (userCurrentView[data?.receiver] && userCurrentView[data?.receiver]?.id == data?.sender) {
+            io.to(data?.receiver).emit('message-phone', getConversationMessage?.messages || [])
+            io.to(data?.receiver).emit('message', getConversationMessage?.messages || [])
         }
 
         // Send updated conversation lists
@@ -121,7 +155,7 @@ io.on('connection', async (socket) => {
 
     // Sidebar for conversations
     socket.on('sidebar-conv', async (currentUserId) => {
-        // console.log("current user", currentUserId)
+        console.log("current user", currentUserId)
         const conversation = await getConversation(currentUserId)
 
         socket.emit('conversation', conversation)

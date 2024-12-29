@@ -50,4 +50,56 @@ async function registerUser(req, res) {
     }
 }
 
-export default registerUser
+async function registerUsingPhone(req, res) {
+    try {
+        const { name, email, password } = req.body
+        console.log(name, email, password)
+        if(!name || !email || !password){
+            return res.json({
+                message : "Please enter all fields",
+                success : false
+            })
+        }
+        if (!email.includes("@")) {
+            return res.json({
+                message: "Please enter a valid email",
+                success: false
+            });
+        }
+        
+
+        const checkEmail = await User.findOne({ email })
+
+        if (checkEmail) {
+            return res.json({
+                message: "Already user exits",
+                success: false,
+            })
+        }
+
+        const salt = await bcrypt.genSalt(10)
+        const hashpassword = await bcrypt.hash(password, salt)
+
+        const payload = {
+            name,
+            email,
+            password: hashpassword
+        }
+
+        const user = await User.create(payload) // {name,email,password}
+
+        return res.status(201).json({
+            message: "User created successfully",
+            user: user,
+            success: true
+        })
+
+    } catch (error) {
+        return res.json({
+            message: error.message || error,
+            success: false
+        })
+    }
+}
+
+export {registerUser, registerUsingPhone}
