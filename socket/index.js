@@ -41,7 +41,7 @@ io.on('connection', async (socket) => {
     io.emit('onlineUser', Array.from(onlineUser))
 
     socket.on('message-page', async (userId) => {
-        console.log("userId in message-page", userId)
+        // console.log("userId in message-page", userId)
         // Set the current chat the user is viewing
         userCurrentView[user._id] = { type: 'chat', id: userId };
 
@@ -68,7 +68,7 @@ io.on('connection', async (socket) => {
     })
 
     socket.on('message-page-phone', async (data) => {
-        console.log("userId in message-page", data.receiverId, data.userId)
+        // console.log("userId in message-page", data.receiverId, data.userId)
         // Set the current chat the user is viewing
         userCurrentView[data.userId] = { type: 'chat', id:  data.receiverId };
 
@@ -136,8 +136,8 @@ io.on('connection', async (socket) => {
         // Emit message to sender and receiver
         socket.emit('message', getConversationMessage?.messages || [])
         if (userCurrentView[data?.receiver] && userCurrentView[data?.receiver]?.id == data?.sender) {
-            io.to(data?.receiver).emit('message', getConversationMessage?.messages || [])
             io.to(data?.receiver).emit('message-phone', getConversationMessage?.messages || [])
+            io.to(data?.receiver).emit('message', getConversationMessage?.messages || [])
         }
         socket.emit('message-phone', getConversationMessage?.messages || [])
         if (userCurrentView[data?.receiver] && userCurrentView[data?.receiver]?.id == data?.sender) {
