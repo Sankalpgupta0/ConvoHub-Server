@@ -142,6 +142,7 @@ io.on('connection', async (socket) => {
         socket.emit('message-phone', getConversationMessage?.messages || [])
         if (userCurrentView[data?.receiver] && userCurrentView[data?.receiver]?.id == data?.sender) {
             io.to(data?.receiver).emit('message-phone', getConversationMessage?.messages || [])
+            // io.to(data?.sender).emit('message-phone', getConversationMessage?.messages || [])
             io.to(data?.receiver).emit('message', getConversationMessage?.messages || [])
         }
 
